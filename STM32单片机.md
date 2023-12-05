@@ -212,6 +212,8 @@
 
 - 在使用浮空输入时，端口一定要接上一个连续的驱动源，不能出现悬空的状态
 - 在输入模式下，输出驱动器是断开的
+- 上拉、下拉输入根据外部模块的空闲电平状态来决定，保持一致即可
+- 不确定外部模块的默认的输出状态，或者外部信号功率非常小，这时就尽量选择浮空输入模式，浮空输入没有上拉电阻和下拉电阻去影响外部信号，缺点是当引脚悬空时，没有默认电平了，输入就容易受到噪声干扰，来回不断地跳变
 
 #### (2)模拟输入
 
@@ -425,7 +427,7 @@
 
 ​		对于STM32来说，想要获取的信号是外部驱动的，很快的，突发信号，比如旋转编码器的输出信号，可能很久不会去扭动它，这时就不需要STM32做任何事，当扭动它时，就会有很多脉冲波形需要STM32接收，这个信号是突发的，STM32并不知道什么时候会来，同时它是外部驱动的，STM32只能被动读取，而且这个信号非常快，STM32如果读取的稍微慢一点，就会错过很多波形，对于这种情况来说，就可以考虑使用STM32的外部中断了；还有比如红外遥控接收头的输出，接收到遥控数据后，会输出一段波形，这个波形转瞬即逝，所有就需要外部中断来读取；还有按键，虽然它的动作也是外部驱动的突发事件，但是并不推荐使用外部中断来读取按键，因为外部中断不好处理按键抖动和松手的检测问题，对于按键来说，它的输出波形也不是转瞬即逝的，所有要求不高的话，可以在主程序中循环读取，如果不想在主程序中读取的话，可以考虑定时器中断读取的方式，这样既可以做到后台读取按键值、不阻塞主程序，也可以很好的处理按键抖动和松手检测的问题
 
-### (十一)外部中断编程流程
+### (十一)外部中断初始化配置
 
 ​	1、配置RCC，打开时钟
 
@@ -703,8 +705,6 @@ TIM_TimeBaseInitStructure.TIM_RepetitionCounter = 0;	//重复计数器，高级�
 TIM_TimeBaseInit(TIM2, &TIM_TimeBaseInitStructure);				//将结构体变量交给TIM_TimeBaseInit，配置TIM2的时基单元	
 ```
 
-​	
-
 ​	4、配置输出中断控制，允许更新中断输出到NVIC
 
 ```
@@ -715,8 +715,6 @@ TIM_ClearFlag(TIM2, TIM_FLAG_Update);//清除定时器更新标志位
 
 TIM_ITConfig(TIM2, TIM_IT_Update, ENABLE);	//开启TIM2的更新中断
 ```
-
-
 
 ​	5、配置NVIC，，在NVIC中打开定时器的中断通道，并分配一个优先级
 
@@ -737,15 +735,11 @@ TIM_ITConfig(TIM2, TIM_IT_Update, ENABLE);	//开启TIM2的更新中断
 	NVIC_Init(&NVIC_InitStructure);			//将结构体变量交NVIC_Init，配置NVIC外设
 ```
 
-
-
 ​	6、运行控制，使能计数器
 
 ```
 TIM_Cmd(TIM2, ENABLE);			//使能TIM2，定时器开始运行
 ```
-
-
 
 ​	7、编程定时器中断函数
 
@@ -762,7 +756,7 @@ void TIM2_IRQHandler(void)
 */
 ```
 
-### (十) 输出比较简介
+### (十) 输出比较
 
 - OC（Output Compare）输出比较
 	- IC（Input Capture，输入捕获）
@@ -786,65 +780,7 @@ void TIM2_IRQHandler(void)
 
 ![image-20231204200058568](image/image-20231204200058568.png)
 
-#### 2、输出比较通道
-
-##### (1)编程思路
-
-```
-/*开启时钟*/
-	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);			//开启TIM2的时钟
-	RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE);			//开启GPIOA的时钟
-	
-	/*GPIO初始化*/
-	GPIO_InitTypeDef GPIO_InitStructure;
-	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU;
-	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_0;
-	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-	GPIO_Init(GPIOA, &GPIO_InitStructure);						//将PA0引脚初始化为上拉输入
-	
-	/*外部时钟配置*/
-	TIM_ETRClockMode2Config(TIM2, TIM_ExtTRGPSC_OFF, TIM_ExtTRGPolarity_NonInverted, 0x0F);
-																//选择外部时钟模式2，时钟从TIM_ETR引脚输入
-																//注意TIM2的ETR引脚固定为PA0，无法随意更改
-																//最后一个滤波器参数加到最大0x0F，可滤除时钟信号抖动
-	
-	/*时基单元初始化*/
-	TIM_TimeBaseInitTypeDef TIM_TimeBaseInitStructure;				//定义结构体变量
-	TIM_TimeBaseInitStructure.TIM_ClockDivision = TIM_CKD_DIV1;		//时钟分频，选择不分频，此参数用于配置滤波器时钟，不影响时基单元功能
-	TIM_TimeBaseInitStructure.TIM_CounterMode = TIM_CounterMode_Up;	//计数器模式，选择向上计数
-	TIM_TimeBaseInitStructure.TIM_Period = 10 - 1;					//计数周期，即ARR的值
-	TIM_TimeBaseInitStructure.TIM_Prescaler = 1 - 1;				//预分频器，即PSC的值
-	TIM_TimeBaseInitStructure.TIM_RepetitionCounter = 0;			//重复计数器，高级定时器才会用到
-	TIM_TimeBaseInit(TIM2, &TIM_TimeBaseInitStructure);				//将结构体变量交给TIM_TimeBaseInit，配置TIM2的时基单元	
-	
-	/*中断输出配置*/
-	TIM_ClearFlag(TIM2, TIM_FLAG_Update);						//清除定时器更新标志位
-																//TIM_TimeBaseInit函数末尾，手动产生了更新事件
-																//若不清除此标志位，则开启中断后，会立刻进入一次中断
-																//如果不介意此问题，则不清除此标志位也可
-																
-	TIM_ITConfig(TIM2, TIM_IT_Update, ENABLE);					//开启TIM2的更新中断
-	
-	/*NVIC中断分组*/
-	NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);				//配置NVIC为分组2
-																//即抢占优先级范围：0~3，响应优先级范围：0~3
-																//此分组配置在整个工程中仅需调用一次
-																//若有多个中断，可以把此代码放在main函数内，while循环之前
-																//若调用多次配置分组的代码，则后执行的配置会覆盖先执行的配置
-	
-	/*NVIC配置*/
-	NVIC_InitTypeDef NVIC_InitStructure;						//定义结构体变量
-	NVIC_InitStructure.NVIC_IRQChannel = TIM2_IRQn;				//选择配置NVIC的TIM2线
-	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;				//指定NVIC线路使能
-	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 2;	//指定NVIC线路的抢占优先级为2
-	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;			//指定NVIC线路的响应优先级为1
-	NVIC_Init(&NVIC_InitStructure);								//将结构体变量交给NVIC_Init，配置NVIC外设
-	
-	/*TIM使能*/
-	TIM_Cmd(TIM2, ENABLE);			//使能TIM2，定时器开始运行
-```
-
-##### (2)输出比较模式
+#### 2、输出比较模式
 
 |     **模式**     |                           **描述**                           |
 | :--------------: | :----------------------------------------------------------: |
@@ -899,7 +835,7 @@ void TIM2_IRQHandler(void)
 		- 设置PSC + 1 = 72,ARR + 1 = 20k
 		- Duty = 0.5ms = CCR / (ARR+1) ;ARR + 1 = 20K;=>CCR = 500;Duty = 2.5ms;=>CCR = 2500;
 
-##### (3)通用定时器
+#### 3、通用定时器
 
 ![image-20231204200544854](image/image-20231204200544854.png)
 
@@ -907,7 +843,7 @@ void TIM2_IRQHandler(void)
 - 左边为CNT计数器和CCR1第一路的捕获/比较寄存器，它们进行比较，当CNT>CCR1,或者CNT = CCR1时 将给输出模式控制器传递一个信号，然后输出模式控制器就会改变它输出OC1REF的高低电平，REF信号(reference,参考信号)实际上就是指这里的高低电平；ETRF输入是定时器的小功能，一般不用；接着REF信号可以前往主模式控制器，将REF映射到主模式的TRGO输出上，但是REF的主要去向还是下面一路，到达极性选择，给CC1P寄存器写0，信号就往上走，信号电平不翻转，输入和输出一样，写1的话，信号就会往下走，信号通过一个非门取反，输出信号就是输入信号高低电平反转的信号，这就是极性选择，选择是不是要把高低电平反转一下；最后到达输出使能电路，选择要不要输出，最后是OC1引脚，这个引脚就是CH1通道的引脚，从引脚定义表里就可以知道具体是哪个GPIO口。
 - 输出模式控制器工作原理，对应**上表**中的8种输出比较模式，模式控制器的输入是CNT和CCR的大小关系，输出是REF的高低电平，选择不同的模式可以更加灵活地控制REF输出；通过TIMx_CCMR1寄存器来配置。
 
-##### (4)高级定时器
+#### 4、高级定时器
 
 ![](image/image-20231204224100531.png)
 
@@ -920,10 +856,383 @@ void TIM2_IRQHandler(void)
 
 - **死区生成和互补输出**：OC1和OC1N是两个互补的输出端口，分别控制上管和下管的导通和关闭。在切换上下管导通状态时，如果上管断开瞬间，下管就立即打开，可能因为器件的不理想，上管还没完全断开，下管已经导通了，出现短暂的上下管同时导通的现象，会导致功率损耗，引起器件发热，所以为了避免这个问题，就有了死区生成电路，它会在切换上下管导通状态时，延迟一小段时间，这样就避免了上下管同时导通的现象了。
 
-##### (5) 同一个定时器输出不同通道的PWM的特点
+#### 5、 同一个定时器输出不同通道的PWM的特点
 
 - 对于同一个定时器的不同通道输出的PWM，它们的频率必须是一样的，因为不同通道共用一个计数器
 - 它们的占空比由各自的CCR决定，占空比可以各自设定
 - 由于计数器更新，所有的PWM同时跳变，所以它们的相位是同步的
 - 如果驱动多个舵机或直流电机，使用一个定时器不同通道的PWM就完全可以了
 
+#### 6、输出比较通道初始化配置
+
+（1）RCC开启时钟
+
+```
+/*开启时钟*/
+	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);			//开启TIM2的时钟
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE);			//开启GPIOA的时钟
+```
+
+（2）配置时基单元，包括时钟源选择
+
+```
+/*配置时钟源*/
+	TIM_InternalClockConfig(TIM2);		//选择TIM2为内部时钟，若不调用此函数，TIM默认也为内部时钟
+	
+	/*时基单元初始化*/
+	TIM_TimeBaseInitTypeDef TIM_TimeBaseInitStructure;				//定义结构体变量
+	TIM_TimeBaseInitStructure.TIM_ClockDivision = TIM_CKD_DIV1;     //时钟分频，选择不分频，此参数用于配置滤波器时钟，不影响时基单元功能
+	TIM_TimeBaseInitStructure.TIM_CounterMode = TIM_CounterMode_Up; //计数器模式，选择向上计数
+	TIM_TimeBaseInitStructure.TIM_Period = 100 - 1;					//计数周期，即ARR的值
+	TIM_TimeBaseInitStructure.TIM_Prescaler = 720 - 1;				//预分频器，即PSC的值
+	TIM_TimeBaseInitStructure.TIM_RepetitionCounter = 0;            //重复计数器，高级定时器才会用到
+	TIM_TimeBaseInit(TIM2, &TIM_TimeBaseInitStructure);             //将结构体变量交给TIM_TimeBaseInit，配置TIM2的时基单元
+```
+
+（3）配置输出比较单元
+
+```
+/*输出比较初始化*/
+	TIM_OCInitTypeDef TIM_OCInitStructure;							//定义结构体变量
+	TIM_OCStructInit(&TIM_OCInitStructure);							//结构体初始化，若结构体没有完整赋值
+																	//则最好执行此函数，给结构体所有成员都赋一个默认值
+																	//避免结构体初值不确定的问题
+	TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;				//输出比较模式，选择PWM模式1
+	TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;		//输出极性，选择为高，若选择极性为低，则输出高低电平取反
+	TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;	//输出使能
+	TIM_OCInitStructure.TIM_Pulse = 0;								//初始的CCR值
+	TIM_OC1Init(TIM2, &TIM_OCInitStructure);						//将结构体变量交给TIM_OC1Init，配置TIM2的输出比较通道1
+```
+
+（4）配置GPIO，把PWM对应得GPIO口，配置为复用推挽输出得配置，对应关系参考引脚定义表
+
+```
+/*GPIO重映射*/
+//	RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO, ENABLE);			//开启AFIO的时钟，重映射必须先开启AFIO的时钟
+//	GPIO_PinRemapConfig(GPIO_PartialRemap1_TIM2, ENABLE);			//将TIM2的引脚部分重映射，具体的映射方案需查看参考手册
+//	GPIO_PinRemapConfig(GPIO_Remap_SWJ_JTAGDisable, ENABLE);		//将JTAG引脚失能，作为普通GPIO引脚使用
+	
+	/*GPIO初始化*/
+	GPIO_InitTypeDef GPIO_InitStructure;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_0;		//GPIO_Pin_15;
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_Init(GPIOA, &GPIO_InitStructure);							//将PA0引脚初始化为复用推挽输出	
+																	//受外设控制的引脚，均需要配置为复用模式		
+```
+
+（5）运行控制，启动定时器
+
+```
+/*TIM使能*/
+	TIM_Cmd(TIM2, ENABLE);			//使能TIM2，定时器开始运行
+```
+
+### (十一) 输入捕获
+
+- IC（Input Capture）输入捕获，通用定时器框图左下角部分
+- 对于同一个定时器的同一个通道，输出捕获和输入比较只能使用其中一个，不能同时使用
+- 输入捕获模式下，当通道输入引脚出现指定电平跳变时，当前CNT的值将被锁存到CCR中，可用于测量PWM波形的频率、占空比、脉冲间隔、电平持续时间等参数
+- 每个高级定时器和通用定时器都拥有4个输入捕获通道
+- 可配置为**PWMI模式**，同时测量频率和占空比，PWM输入模式
+- 可配合**主从触发模式**，实现硬件全自动测量
+
+#### 1、频率测量
+
+![image-20231205114447183](image/image-20231205114447183.png)
+
+- 由左向右，频率逐渐降低
+
+- 测频法：在闸门时间T内，对上升沿计次，得到N，适合测量高频信号，在闸门时间内，上升沿出现次数越多，测量精度越高；测频法测量自带一个均值滤波，在闸门时间内如果频率有变化，得到的闸门时间内的平均频率；测量速度取决于闸门时间；**高频适合使用测频法**。
+
+	​												$f_x=N / T$
+
+	- 实现方法：在使用对射式红外传感器时，每来一个上升沿计次+1，同时配置一个定时时长为1s定时器（闸门时间），中断服务程序就是读取计次值，同时计次清零，每次读取的计次值就是频率
+
+- 测周法：两个上升沿内，以标准频率fc计次，得到N ，适合测量低频信号，信号频率f~c~越低越好，低频信号，周期较长，计次就会越多，测量精度就越高；测量速度取决于待测信号的频率；由于测周法只测量一个周期，所以测量会受噪声的影响，波动较大；**低频适合使用测周法**。
+
+​													$f_x=f_c / N$
+
+- 中界频率：测频法与测周法误差相等的频率点，计次数量N越大，误差越小，精度越高，在这些方法中，计次可能存在正负1误差，在测频法中，在闸门时间内不能保证每一个周期信号都是完整的，而在测周法中，一个数刚计到一半，计时就结束了，为了减少这种正负1的误差的影响，就需要多计一些数，当计次N比较大时，正负1误差对N的影响就会比较很小。当存在一个频率，使得测频法和测周法计次的N相同，就说明误差相同，就得到了中界频率。
+
+​												$ N/T = f_c/N(N相同)$
+
+​												$f_m=√(f_c / T)$
+
+- 当待测频率小于中界频率时，测周法误差更小；当待测信号频率大于中界频率时，测周法误差更小
+
+#### 2、电路分析
+
+![image-20231205124711696](image/image-20231205124711696.png)
+
+- 从输入引脚进来后，先经过一个三输入的异或门，异或门的输入接到了CH1、CH2、CH3三个输入引脚，当三个输入引脚的任意一个有电平翻转时，输出引脚就产生一次电平翻转，之后输出通过数据选择器，到达输入捕获通道1，数据选择器选择异或门的输出，输入就是3个引脚的异或值，数据选择器就选择CH1、CH2、CH3。（三输入异或门的设计也是为了服务三相无刷电机，无刷电机有3个霍尔传感器检测转子的位置，可以根据转子的位置进行换相，通过这个异或门，就可以在前三个通道接上无刷电机的霍尔传感器，该定时器就作为无刷电机的接口定时器，去驱动换相电路的工作），经过数据选择器后到达输入滤波器和边沿检测器（高电平触发还是低电平触发），当出现到直定电平时，边沿检测电路就会触发后续电路执行动作。
+- 在图中可以看到，这里设计了两套输入滤波器，第一套电路，经过滤波和极性选择，得到TIFP1（TI1 Filter Polarity 1），输出给通道1得后续电路，第二套电路，经过另一个滤波和极性选择，得到TIFP2（TI1 Filter Polarity 2），输入给下面通道2得后续电路；同理TI2经过两套滤波和极性选择得到 TI2FP1和TI2FP2，其中TI2FP1输出给IC1，TI2FP2输出给IC2；这样设计，两个信号进来，可以选择各走各的，也可以选择进行一个交叉，让CH2引脚输入给通道1，CH1引脚输入给通道2，交叉连接的目的，可以灵活切换后续捕获电路的输入；也可以把一个引脚的输入，同时映射到两个捕获单元，也就是PWMI的经典结构，第一个捕获通道，使用上升沿触发，用来捕获周期，第二个通道，使用下降沿触发，用来捕获占空比。TRC信号也可以选择作为捕获部分的输入，用来驱动无刷电机。
+- 经过数据选择器选择的信号到达预分频器，每个通道都有独立的预分频器，可以对输入信号进行分频，分频后的信号就可以触发捕获电路进行工作，每来一个触发信号，CNT的值，就会向CCR转运一次，转运的同时，会发送一个捕获事件CC1I，这个事件会在状态寄存器置标志位，同时也可以产生中断，如果需要在捕获瞬间处理一些事情，就可以开启捕获中断。
+- 比如配置上升沿触发捕获，每来一个上升沿，CNT转运到CCR一次，又因为CNT计数器是由内部的标准时钟驱动的，所以CNT的数值，就可以用来记录两个上升沿之间的时间间隔，这个时间间隔就是周期，取倒数就是测周法测量的频率，上升沿用于触发输入捕获，CNT用于计数计时，每来一个上升沿，取一下CNT的值，自动存在CCR里，CCR捕获的值就是计数值N，CNT的驱动时钟就是f~c~，公式计算就得到待测信号频率，每次捕获后，要对CNT进行清零，计下一个周期的数；这个在一次捕获后自动将CNT清零的步骤，可以使用主从触发模式，自动来完成。
+
+#### 3、输入捕获通道
+
+![image-20231205131657217](image/image-20231205131657217.png)
+
+- TI1就是滤波器输入，也是CH1的引脚；输出的TI1F就是滤波后的信号；fDTS是滤波器的采样时钟来源；CCMR1寄存器里的ICF位可以控制滤波器的参数(参考手册p228,采样频率越低，采样个数N越大，滤波效果就越好）；滤波后的信号经过边沿检测器，捕获上升沿或下降沿（使用CCER寄存器中的CC1P位就可以选择极性）；最终得到TI1FP1触发信号，通过数据选择器进去通道1后续的捕获电路（实际还有一套一样的电路得到TI1FP2，连通到通道2的后续电路），同样，通道2有TI2FP1，连通到通道1的后续，而通道2的TI2FP2，连通到通道2的后续，共4种连接方式；然后再经过数据选择器，进入后续捕获部分电路，CC1S位可以对数据选择器进行选择，ICPS位可以配置最后的分频器，最后CC1E位控制输出使能或失能。
+- TI1FP1信号和TI1的边沿信号（TI1F_ED）都可以通向从模式控制器
+
+#### 4、主从触发模式
+
+![image-20231205132924535](image/image-20231205132924535.png)
+
+- 利用主从触发模式完成硬件自动化的操作
+- 主模式、触发源选择和从模式三个功能的简称，主从触发模式
+- 主模式可以将定时器内部的信号，映射到TRGO引脚，用于触发别的外设
+- 从模式可以接收其他外设或者自身外设的一些信号，用于控制自身定时器的运行，也就是被别的信号控制
+- 触发源选择，选择从模式的触发信号源，选择指定的信号得到TRGI，TRGI去触发从模式，从模式可以在列表里，选择一项操作来自动执行
+- 选择TI1FP1作为触发信号源，从模式操作选择Reset，这样TI1FP1的信号就可以自动触发从模式，从模式自动清零CNT，实现硬件自动清零
+- 参考手册p283
+
+#### 5、输入捕获基本结构
+
+![image-20231205173155394](image/image-20231205173155394.png)
+
+- 输入捕获通道1的GPIO口，输入左上角的方波信号，经过滤波器 和边沿检测，选择TI1FP1为上升沿触发，最后输入选择直连的通道，分频器选择不分频，当TI1FP1出现上升沿之后，CNT的当前计数值转运到CCR1里；同时触发源选择，选择TI1FP1为触发信号，从模式选择复位操作，这样TI1FP1的上升沿就会通过上面一路，去触发CNT清零；先把CNT的值转运到CCR里，再触发从模式给CNT清零，或者是非阻塞的同时转移，CNT的值转移到CCR，同时0转移到CNT里。
+- 左上角，当信号出现一个上升沿，CCR1 = CNT 就是把CNT的值转云到CCR1里，这是输入捕获自动执行的，然后CNT = 0，清零计数器，这是从模式自动执行的；当电路工作时，CCR1的值，始终保持为最新一个周期的计数值，计数值也就是N，想要得到信号的频率，只需要读取CCR1得到N的值，再计算$f_c/N$,不需要读取时，整个电路全自动测量，不需要占用任何软件资源。
+- CNT的值是有上限的，ARR一般设置为最大值65535，CNT最大计65535个数，如果信号频率太低，CNT计数值可能会溢出；
+- 从模式的触发源选择：在触发源选择中只有TI1FP1和TI2FP2，没有TI3和TI4的信号，如果使用从模式自动清零CNT，就只能使用通道1和通道2；对于通道3和通道4，只能开启捕获中断，在中断里手动清零，这样的话，程序就会处于频繁中断的状态，比较消耗软件资源
+
+#### 6、PWMI基本结构
+
+![image-20231205174846202](image/image-20231205174846202.png)
+
+
+
+- 与上图不同的是，在下方，多了一个通道。首先TI1FP1配置上升沿触发，触发捕获和清零CNT，正常的捕获周期；这时来一个TI1FP2，配置为下降沿触发，通过交叉通道，去触发通道2的捕获单元。
+- 参考左上角波形图，最开始为上升沿，CCR1捕获，同时清零CNT，之后CNT一直++；在下降沿这个时刻，触发CCR2捕获，这时CCR2的值。就是从CNT到下降沿的计数值，也就是高电平期间的计数值，CCR2捕获并不触发CNT清零，CNT继续++，直到下一个上升沿，CCR1捕获周期，CNT清零。
+- 这样CCR1就是一整个周期的计数值，CCR2就是高电平期间的计数值，CCR2 / CCR1就能得到占空比，这就是PWMI模式，使用两个通道来捕获频率和占空比的思路
+
+#### 7、输入捕获初始化配置
+
+​		（1）RCC开启时钟，打开GPIO和TIM的时钟
+
+```
+RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM3, ENABLE);			//开启TIM3的时钟
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE);			//开启GPIOA的时钟
+```
+
+​		（2）GPIO初始化，把GPIO配置为输入模式，一般选择上拉输入或浮空输入模式
+
+```
+/*GPIO初始化*/
+	GPIO_InitTypeDef GPIO_InitStructure;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU;
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_6;
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_Init(GPIOA, &GPIO_InitStructure);		//将PA6引脚初始化为上拉输入
+```
+
+​		（3）配置时基单元，让CNT计数器在内部时钟的驱动下自增运行
+
+```
+/*配置时钟源*/
+	TIM_InternalClockConfig(TIM3);		//选择TIM3为内部时钟，若不调用此函数，TIM默认也为内部时钟
+TIM_TimeBaseInitTypeDef TIM_TimeBaseInitStructure;				//定义结构体变量
+	TIM_TimeBaseInitStructure.TIM_ClockDivision = TIM_CKD_DIV1;     //时钟分频，选择不分频，此参数用于配置滤波器时钟，不影响时基单元功能
+	TIM_TimeBaseInitStructure.TIM_CounterMode = TIM_CounterMode_Up; //计数器模式，选择向上计数
+	TIM_TimeBaseInitStructure.TIM_Period = 65536 - 1;               //计数周期，即ARR的值
+	TIM_TimeBaseInitStructure.TIM_Prescaler = 72 - 1;               //预分频器，即PSC的值
+	TIM_TimeBaseInitStructure.TIM_RepetitionCounter = 0;            //重复计数器，高级定时器才会用到
+	TIM_TimeBaseInit(TIM3, &TIM_TimeBaseInitStructure);             //将结构体变量交给TIM_TimeBaseInit，配置TIM3的时基单元
+```
+
+​		（4）配置输入捕获单元，包括滤波器，极性、直连通道还是交叉通道、分频器这些参数
+
+```
+/*输入捕获初始化*/
+	TIM_ICInitTypeDef TIM_ICInitStructure;							//定义结构体变量
+	TIM_ICInitStructure.TIM_Channel = TIM_Channel_1;				//选择配置定时器通道1
+	TIM_ICInitStructure.TIM_ICFilter = 0xF;							//输入滤波器参数，可以过滤信号抖动
+	TIM_ICInitStructure.TIM_ICPolarity = TIM_ICPolarity_Rising;		//极性，选择为上升沿触发捕获
+	TIM_ICInitStructure.TIM_ICPrescaler = TIM_ICPSC_DIV1;			//捕获预分频，选择不分频，每次信号都触发捕获
+	TIM_ICInitStructure.TIM_ICSelection = TIM_ICSelection_DirectTI;	//输入信号交叉，选择直通，不交叉
+	TIM_ICInit(TIM3, &TIM_ICInitStructure);							//将结构体变量交给TIM_ICInit，配置TIM3的输入捕获通道
+```
+
+​		（5）选择从模式的触发源，选择TI1FP1
+
+```
+/*选择触发源及从模式*/
+	TIM_SelectInputTrigger(TIM3, TIM_TS_TI1FP1);					//触发源选择TI1FP1
+	
+```
+
+​		（6）选择触发之后执行的操作，执行Reset操作
+
+```
+TIM_SelectSlaveMode(TIM3, TIM_SlaveMode_Reset);					//从模式选择复位
+																	//即TI1产生上升沿时，会触发CNT归零
+```
+
+​		（7）最后，开启定时器
+
+```
+/*TIM使能*/
+	TIM_Cmd(TIM3, ENABLE);			//使能TIM3，定时器开始运行
+```
+
+#### 8、输入捕获测量频率的性能
+
+​		下限：输出比较PWM波形的频率为1MHz，计数器最大只能计到65535，所以所测量的最低频率为 **Freq = CK_PSC / (PSC + 1) / (ARR + 1) = 72M/65535/72 = 15 Hz**，如果信号频率再低，计数器将溢出（测得的频率等于fc/N，这里的N值就是CNT里面过去的，当N越大，频率越小，但是CNT最大不能超过ARR的值(最大为65535)所以测量的最小频率大概是15Hz），如果想降低最低频率的限制，可以把预分频加大一点，这样标准频率就更低，所支持测量的最低频率也就更低。
+
+​		上限：支持测量的最大频率，随着待测频率的增大，误差也会逐渐增大，如果非要找个频率上限，那应该就是标准频率1MHz,超过1MHz，信号频率比标准频率还高，就无法测量了；实际上当信号频率接近1MHz时，误差已经非常大了，最大频率要根据误差的要求。正负1误差，计100个数，误差1个，相对误差就是百分之一，计一千个数，误差一个，相对误差就是千分之一，如果要求误差为千分之一时，那这个测量上限就是1M/1000 = 1KHz。如果要提高待测频率的上限，就降低PSC的值，提高标准频率，上限就会提高。如果频率还要更高，就要考虑测频法。除了正负1误差外实际测量时，还有晶振误差，STM32晶振在计次几百万次之后，误差积累，也会造成影响。
+
+###  （十二）编码器接口
+
+- Encoder Interface 编码器接口
+
+- 编码器接口可接收增量（正交）编码器的信号，根据编码器旋转产生的正交信号脉冲，自动控制CNT自增或自减，从而指示编码器的位置、旋转方向和旋转速度
+
+- 每个高级定时器和通用定时器都拥有1个编码器接口
+
+- 两个输入引脚借用了输入捕获的通道1和通道2，每个定时器的CH1和CH2
+
+- 使用场景：编码器测速一般应用于电机控制的项目上，使用PWM驱动电机，再使用编码器测量电机的速度，最后使用PID算法进行闭环控制
+
+	​		编码器的A相和B相，分别接到STM32的定时器的编码器接口，编码器接口自动控制定时器时基单元中的CNT计数器进行自增或自减，比如在初始化后，CNT初始值为0，编码器右转，CNT++，右转产生一个脉冲，CNT就加1一次，比如右转产生10个脉冲然后停下来，CNT就由0自增到10，停下来；编码器左转，CNT--，左转产生一个脉冲，CNT就减1一次，比如再左转产生5个脉冲然后停下来，CNT就由原来的10自减到5，停下来；编码器接口就相当于一个带有方向控制的外部时钟，同时控制着CNT的计数时钟和计数方向，这样CNT的值就表示了编码器的位置，如果每隔一段时间取CNT的值再将CNT清0，每次取出的值就表示了编码器的速度。编码器测速实际上就是，测频法测正交脉冲的频率，CNT计次，然后每隔一段时间取一次计次。而编码器接口计次更高级，能根据旋转方向，不仅能自增计次，还能自减计次，是**带方向的测速。**
+
+#### 1、正交编码器
+
+![image-20231205195404752](image/image-20231205195404752.png)
+
+- 正交编码器一般可以测量位置，或者带有方向的速度值，一般有两个信号输出引脚，一个是A相一个是B相
+
+- 方波的频率就代表了速度，取任意一相的频率就知道旋转速度了，但是只有一相的信号，无法测量旋转方向。
+- 获取旋转方向的解决方案：
+	- 定义一个方向输出引脚，正转置高电平，反转置低电平，但是这样的信号并不是正交信号
+	- 正交信号，朝一个方向转时，A相提前B相90度，朝另一个方向转时A相置后90度
+	- 二者相比，正交信号精度更高，A、B相都可以计次，相当于计次频率提高了一次，其次就是正交信号可以抗噪声，因为正交信号，两个信号必须时交替跳变，所以可以设计一个抗噪声电路，如果一个信号不变，另一个信号连续跳变，也就是产生了噪声，那么这时的计次值是不会变化的
+
+#### 2、编码器电路结构
+
+![image-20231205215541365](image/image-20231205215541365.png)
+
+​		编码器接口有两个输入端，TI1FP1和TI2FP2分别接到编码器的A相和B相，编码接口的两个引脚借用了输入捕获单元的前两个通道，通道1和通道2，最终编码器的输入引脚分别接在CH1和CH2，编码器接口的输出部分就相当于从模式控制器，去控制CNT的计数时钟和计数方向。
+
+​		如果出现了边沿信号，并且对于另一相的状态为正转，则控制CNT自增，否则控制CNT自减。
+
+​		需要注意的时：使用定时器编码器接口时，之前一直使用的72MHz内部时钟，和在实际单元初始化时设置的计数方向，并不会使用，此时的计数时钟和计数方向都处于编码器接口托管的状态，计数器的自增和自减受编码器控制。
+
+#### 3、编码器接口基本结构
+
+![image-20231205221022934](image/image-20231205221022934.png)
+
+​		输入捕获的前两个通道，通过GPIO口接入编码器的A、B相，然后通过滤波器和边沿检测选择，产生TI1FP1和TI2FP2，通向编码器接口，编码器通过预分频器控制CNT计数器的时钟，同时，编码器接口根据编码器的旋转方向，控制CNT的计数方向，编码器正转时CNT自增，编码器翻转时CNT自减。
+
+​		ARR在这里也是有效的，一般设置ARR为65535，最大量程；这样的话，利用补码的特性，很容易得到负数，可以把这16位的无符号数转换为16位的有符号数，根据补码的定义，65535就对应-1（负数补码为原码取反+1），就可以之间得到负数
+
+#### 4、工作模式
+
+![image-20231205221034510](image/image-20231205221034510.png)
+
+- 在TI1和TI2上计数（精度最高）
+
+| **边沿** | **另一相状态** |
+| -------- | -------------- |
+| A相↑     | B相低电平      |
+| A相↓     | B相高电平      |
+| B相↑     | A相高电平      |
+| B相↓     | A相低电平      |
+
+| **边沿** | **另一相状态** |
+| -------- | -------------- |
+| A相↑     | B相高电平      |
+| A相↓     | B相低电平      |
+| B相↑     | A相低电平      |
+| B相↓     | A相高电平      |
+
+- 正转的状态都向上计数，反转的状态都向下计数
+
+#### 5、实例（均不反向）
+
+![image-20231205221704019](image/image-20231205221704019.png)
+
+![image-20231205221708074](image/image-20231205221708074.png)
+
+- 在毛刺出现的地方，就是因为信号出现了噪声，在这个时候，TI2没有变化，TI1却跳变了好几次，这不符合正交编码器的信号规律，实行上表的逻辑，出现毛刺噪声时，计数并不受毛刺噪声的影响，这就是正交编码器抗噪声的原理。
+
+#### 6、实例（TI1反相，TI2不反相）
+
+![image-20231205222327736](image/image-20231205222327736.png)
+
+![image-20231205222331963](image/image-20231205222331963.png)
+
+- 展示极性的变化对计数的影响
+- TI1和TI2从接口进来，都会经过极性选择的部分，在输入捕获模式下，极性选择是选择上升沿有效还是下降沿有效的，根据分析，编码器接口，始终都是上升沿和下降沿都有效的，上升沿和下降沿都需要计次；所以在输入捕获模式下的极性选择就不再是边沿的极性选择了，而是高低电平的极性选择，选择上升沿的参数，就是信号直通过来，高低电平极性不反转，选择下降沿的参数，信号会通过一个非门过来，高低电平极性反转；极性的选择也就是要不要在这里加一个非门反转电平。
+- 通过改变任意一个引脚反相，就能反转计数方向，也可以之间交换A、B相两个引脚
+
+#### 7、编码器接口初始化配置
+
+（1）RCC开启时钟，开启GPIO和定时器的时钟
+
+```
+RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM3, ENABLE);			//开启TIM3的时钟
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE);			//开启GPIOA的时钟
+```
+
+（2）配置GPIO，配置PA6和PA7为输入模式
+
+```
+/*GPIO初始化*/
+	GPIO_InitTypeDef GPIO_InitStructure;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU;
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_6 | GPIO_Pin_7;
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_Init(GPIOA, &GPIO_InitStructure);							//将PA6和PA7引脚初始化为上拉输入
+```
+
+（3）配置时基单元，预分频器不分频，ARR一般给最大65535
+
+```
+/*时基单元初始化*/
+	TIM_TimeBaseInitTypeDef TIM_TimeBaseInitStructure;				//定义结构体变量
+	TIM_TimeBaseInitStructure.TIM_ClockDivision = TIM_CKD_DIV1;     //时钟分频，选择不分频，此参数用于配置滤波器时钟，不影响时基单元功能
+	TIM_TimeBaseInitStructure.TIM_CounterMode = TIM_CounterMode_Up; //计数器模式，选择向上计数
+	TIM_TimeBaseInitStructure.TIM_Period = 65536 - 1;               //计数周期，即ARR的值
+	TIM_TimeBaseInitStructure.TIM_Prescaler = 1 - 1;                //预分频器，即PSC的值
+	TIM_TimeBaseInitStructure.TIM_RepetitionCounter = 0;            //重复计数器，高级定时器才会用到
+	TIM_TimeBaseInit(TIM3, &TIM_TimeBaseInitStructure);             //将结构体变量交给TIM_TimeBaseInit，配置TIM3的时基单元
+```
+
+（4）配置输入捕获单元，只有滤波器和极性选择两个参数有用
+
+```
+/*输入捕获初始化*/
+	TIM_ICInitTypeDef TIM_ICInitStructure;							//定义结构体变量
+	TIM_ICStructInit(&TIM_ICInitStructure);							//结构体初始化，若结构体没有完整赋值
+																	//则最好执行此函数，给结构体所有成员都赋一个默认值
+																	//避免结构体初值不确定的问题
+																	
+																	TIM_ICInitStructure.TIM_Channel = TIM_Channel_1;				//选择配置定时器通道1
+	TIM_ICInitStructure.TIM_ICFilter = 0xF;							//输入滤波器参数，可以过滤信号抖动
+	TIM_ICInit(TIM3, &TIM_ICInitStructure);							//将结构体变量交给TIM_ICInit，配置TIM3的输入捕获通道
+	TIM_ICInitStructure.TIM_Channel = TIM_Channel_2;				//选择配置定时器通道2
+	TIM_ICInitStructure.TIM_ICFilter = 0xF;							//输入滤波器参数，可以过滤信号抖动
+	TIM_ICInit(TIM3, &TIM_ICInitStructure);							//将结构体变量交给TIM_ICInit，配置TIM3的输入捕获通道
+```
+
+（5）配置编码器接口模式
+
+```
+/*编码器接口配置*/
+	TIM_EncoderInterfaceConfig(TIM3, TIM_EncoderMode_TI12, TIM_ICPolarity_Rising, TIM_ICPolarity_Rising);
+																	//配置编码器模式以及两个输入通道是否反相
+																	//注意此时参数的Rising和Falling已经不代表上升沿和下降沿了，而是代表是否反相
+																	//此函数必须在输入捕获初始化之后进行，否则输入捕获的配置会覆盖此函数的部分配置
+```
+
+（6）启动定时器
+
+```
+
+	/*TIM使能*/
+	TIM_Cmd(TIM3, ENABLE);			//使能TIM3，定时器开始运行
+```
+
+- 初始化结束后，CNT就会跟着编码器旋转而自增自减，如果想直到编码器的位置，直接读取CNT的值就可以了，如果需要知道编码器的速度和方向，就需要每隔一段固定的闸门时间，取出一次CNT，然后把CNT清零
